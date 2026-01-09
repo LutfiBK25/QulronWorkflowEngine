@@ -11,7 +11,7 @@ public class ExecutionSession
     public Guid SessionId { get; }
     public DateTime StartTime { get; }
     public string UserId { get; set; }
-    public string DeviceId { get; set; }
+    public string DeviceId { get; set; } // Device Context
     public string CurrentDatabase { get; set; } // Track current database connection
 
     // Pause/Resume Support
