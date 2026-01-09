@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Database Sample Data.sql" />
+    <File Path="Future_Edits_Helper.md" />
+  </Folder>
+  <Folder Name="/Solution Items/redis/">
+    <File Path="docker-compose.yml" />
+  </Folder>
+  <Project Path="Domain/Domain.csproj" />
+  <Project Path="Infrastructure/Infrastructure.csproj" />
+  <Project Path="QulronEngineConsoleApp/QulronEngineConsoleApp.csproj" />
+</Solution>
