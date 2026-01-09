@@ -12,12 +12,6 @@ namespace Infrastructure.ProcessEngine.Executors;
 /// </summary>
 public class CompareExecutor
 {
-    private readonly ModuleCache _moduleCache;
-
-    public CompareExecutor(ModuleCache moduleCache)
-    {
-        _moduleCache = moduleCache; 
-    }
 
     public async Task<ActionResult> ExecuteAsync(
         CompareActionModule compareAction, 
