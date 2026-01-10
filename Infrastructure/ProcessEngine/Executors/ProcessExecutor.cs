@@ -5,14 +5,21 @@ namespace Infrastructure.ProcessEngine.Executors;
 
 public class ProcessExecutor
 {
+    private readonly CalculateExecutor _calculateExecutor;
+    private readonly CompareExecutor _compareExecutor;
     private readonly DatabaseExecutor _databaseExecutor;
+    private readonly DialogExecutor _dialogExecutor;
+
     private readonly ModuleCache _moduleCache;
-    // to protect against  infinte nesting in process modules
+    // to protect against infinite nesting in process modules
     private const int MaxCallDepth = 20;
 
     public ProcessExecutor(Dictionary<string, string> connectionStrings, ModuleCache moduleCache)
     {
+        _calculateExecutor = new CalculateExecutor();
+        _compareExecutor = new CompareExecutor();
         _databaseExecutor = new DatabaseExecutor(connectionStrings, moduleCache);
+        _dialogExecutor = new DialogExecutor(moduleCache);
         _moduleCache = moduleCache;
     }
 
@@ -22,7 +29,7 @@ public class ProcessExecutor
         Dictionary<string, object> parameters = null)
     {
         // Check call depth
-        if(session.CallDepth >= MaxCallDepth)
+        if (session.CallDepth >= MaxCallDepth)
         {
             return ActionResult.Fail($"Max call depth ({MaxCallDepth}) exceeded");
         }
@@ -65,16 +72,11 @@ public class ProcessExecutor
                         var convertedValue = ConvertToFieldType(param.Value, fieldModule.FieldType);
                         session.SetFieldValue(fieldModule.ModuleId, convertedValue);
                     }
-                    else
-                    {
-                        // Parameter doesn't match any field - log warning but continue
-                        // Could add logging here if needed
-                    }
                 }
             }
-            
-            // Execute steps
-            var result = await ExecuteStepsAsync(processModule, session);
+
+            // Execute steps starting from sequence 1
+            var result = await ExecuteStepsFromSequenceAsync(processModule, session, 1);
 
             return result;
         }
@@ -112,13 +114,17 @@ public class ProcessExecutor
         }
     }
 
-    private async Task<ActionResult> ExecuteStepsAsync(
-       ProcessModule processModule,
-       ExecutionSession session)
+    /// <summary>
+    /// Execute steps starting from a given sequence number
+    /// Used by both ExecuteAsync (sequence 1) and ResumeAfterDialogAsync (next sequence)
+    /// </summary>
+    private async Task<ActionResult> ExecuteStepsFromSequenceAsync(
+        ProcessModule processModule,
+        ExecutionSession session,
+        int startingSequence)
     {
         var steps = processModule.Details.OrderBy(d => d.Sequence).ToList();
-        var currentSequence = 1;
-        // Protection against infinite loops inside a process module
+        var currentSequence = startingSequence;
         var maxIterations = 10000;
         var iterations = 0;
 
@@ -129,49 +135,21 @@ public class ProcessExecutor
             {
                 return ActionResult.Fail($"Step with sequence {currentSequence} not found");
             }
-            // skip commented steps
+
+            // Skip commented steps
             if (step.CommentedFlag)
             {
                 currentSequence++;
                 continue;
             }
 
-            // Execute Action
-            ActionResult result;
+            // Execute the step and get result
+            var result = await ExecuteStepAsync(step, session, currentSequence);
 
-            switch (step.ActionType)
+            // If dialog paused execution, return immediately
+            if (session.IsPaused)
             {
-                case ActionType.ReturnPass:
-                    {
-                        return ActionResult.Pass("Process Completed");
-                    }
-                case ActionType.ReturnFail:
-                    {
-                        return ActionResult.Fail("Process Failed");
-                    }
-                case ActionType.Call:
-                    // Call another process module
-                    if (!step.ActionId.HasValue)
-                    {
-                        return ActionResult.Fail("Call action missing action Id");
-                    }
-                    result = await ExecuteAsync(step.ActionId.Value, session);
-                    break;
-                case ActionType.DatabaseExecute:
-                    // Execute Database action
-                    if (!step.ActionId.HasValue)
-                    {
-                        return ActionResult.Fail("Database action missing ActionId");
-                    }
-                    var dbAction = _moduleCache.GetDatabaseAction(step.ActionId.Value);
-                    if (dbAction == null)
-                    {
-                        return ActionResult.Fail($"Database action {step.ActionId} not found in cache");
-                    }
-                    result = await _databaseExecutor.ExecuteAsync(dbAction, session);
-                    break;
-                default:
-                    return ActionResult.Fail($"Unknown action type: {step.ActionType}");
+                return result;
             }
 
             // Determine next step based on result
@@ -190,6 +168,85 @@ public class ProcessExecutor
         return ActionResult.Fail($"Maximum iteration limit ({maxIterations}) reached");
     }
 
+    /// <summary>
+    /// Execute a single step action
+    /// </summary>
+    private async Task<ActionResult> ExecuteStepAsync(
+        ProcessModuleDetail step,
+        ExecutionSession session,
+        int currentSequence)
+    {
+        switch (step.ActionType)
+        {
+            case ActionType.ReturnPass:
+                return ActionResult.Pass("Process Completed");
+
+            case ActionType.ReturnFail:
+                return ActionResult.Fail("Process Failed");
+
+            case ActionType.Call:
+                if (!step.ActionId.HasValue)
+                {
+                    return ActionResult.Fail("Call action missing action Id");
+                }
+                return await ExecuteAsync(step.ActionId.Value, session);
+
+            case ActionType.Compare:
+                if (!step.ActionId.HasValue)
+                {
+                    return ActionResult.Fail("Compare action missing action Id");
+                }
+                var compareAction = _moduleCache.GetCompareActionModule(step.ActionId.Value);
+                if (compareAction == null)
+                {
+                    return ActionResult.Fail($"Compare action {step.ActionId} not found in cache");
+                }
+                return await _compareExecutor.ExecuteAsync(compareAction, session);
+
+            case ActionType.Calculate:
+                if (!step.ActionId.HasValue)
+                {
+                    return ActionResult.Fail("Calculate action missing ActionId");
+                }
+                var calculateAction = _moduleCache.GetCalculateActionModule(step.ActionId.Value);
+                if (calculateAction == null)
+                {
+                    return ActionResult.Fail($"Calculate action {step.ActionId} not found in cache");
+                }
+                return await _calculateExecutor.ExecuteAsync(calculateAction, session);
+
+            case ActionType.DatabaseExecute:
+                if (!step.ActionId.HasValue)
+                {
+                    return ActionResult.Fail("Database action missing ActionId");
+                }
+                var dbAction = _moduleCache.GetDatabaseAction(step.ActionId.Value);
+                if (dbAction == null)
+                {
+                    return ActionResult.Fail($"Database action {step.ActionId} not found in cache");
+                }
+                return await _databaseExecutor.ExecuteAsync(dbAction, session);
+
+            case ActionType.Dialog:
+                if (!step.ActionId.HasValue)
+                {
+                    return ActionResult.Fail("Dialog action missing Action Id");
+                }
+                var dialogAction = _moduleCache.GetDialogActionModule(step.ActionId.Value);
+                if (dialogAction == null)
+                {
+                    return ActionResult.Fail($"Dialog action {step.ActionId} not found in cache");
+                }
+                return await _dialogExecutor.ExecuteAsync(dialogAction, session, currentSequence);
+
+            default:
+                return ActionResult.Fail($"Unknown action type: {step.ActionType}");
+        }
+    }
+
+    /// <summary>
+    /// Determine where to go for the next step
+    /// </summary>
     private int ResolveNextSequence(
         List<ProcessModuleDetail> steps,
         int currentSequence,
@@ -198,19 +255,62 @@ public class ProcessExecutor
         if (string.IsNullOrEmpty(label))
             return currentSequence + 1;
 
-        switch (label.ToUpper())
+        return label.ToUpper() switch
         {
-            case "NEXT":
-                return currentSequence + 1;
+            "NEXT" => currentSequence + 1,
+            "PREV" => currentSequence - 1,
+            _ => steps.FirstOrDefault(s =>
+                    s.LabelName?.Equals(label, StringComparison.OrdinalIgnoreCase) == true)
+                ?.Sequence ?? -1
+        };
+    }
 
-            case "PREV":
-                return currentSequence - 1;
-
-            default:
-                // Jump to labeled step
-                var targetStep = steps.FirstOrDefault(s =>
-                    s.LabelName?.Equals(label, StringComparison.OrdinalIgnoreCase) == true);
-                return targetStep?.Sequence ?? -1;
+    /// <summary>
+    /// Resume execution after dialog input
+    /// </summary>
+    public async Task<ActionResult> ResumeAfterDialogAsync(
+        ExecutionSession session,
+        string inputValue)
+    {
+        if (!session.IsPaused)
+        {
+            return ActionResult.Fail("Session is not paused");
         }
+
+        if (!session.CanResume())
+        {
+            return ActionResult.Fail("Session cannot be resumed - missing pause context");
+        }
+
+        // Get the dialog action that paused execution
+        var dialogAction = _moduleCache.GetDialogActionModule(session.PausedAtProcessModuleId.Value);
+        if (dialogAction == null)
+        {
+            return ActionResult.Fail($"Dialog action {session.PausedAtProcessModuleId} not found");
+        }
+
+        // Process the input
+        var inputResult = _dialogExecutor.ProcessInput(dialogAction, session, inputValue);
+        if (inputResult.Result == ExecutionResult.Fail)
+        {
+            return inputResult;
+        }
+
+        // Get the process module we were executing
+        var currentFrame = session.CurrentFrame;
+        if (currentFrame == null)
+        {
+            return ActionResult.Fail("No execution frame available");
+        }
+
+        var processModule = _moduleCache.GetProcessModule(currentFrame.ProcessModuleId);
+        if (processModule == null)
+        {
+            return ActionResult.Fail($"Process module {currentFrame.ProcessModuleId} not found");
+        }
+
+        // Resume execution from next step
+        var nextSequence = session.PausedAtStep.Value + 1;
+        return await ExecuteStepsFromSequenceAsync(processModule, session, nextSequence);
     }
 }

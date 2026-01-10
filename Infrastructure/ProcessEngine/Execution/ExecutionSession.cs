@@ -117,7 +117,10 @@ public class ExecutionSession
 
     public void Resume()
     {
-        IsPaused = false; 
+        IsPaused = false;
+        PausedAtStep = null;
+        PausedScreenJson = null;
+        // CurrentStep remains set to continue from next step
     }
 
     public bool CanResume()

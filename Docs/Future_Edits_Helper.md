@@ -34,3 +34,4 @@ Loads Application Modules into the cache
 # Test connection
 docker exec -it processengine-redis redis-cli ping
 # Should return: PONG
+

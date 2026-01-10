@@ -122,7 +122,7 @@ public class EngineSessionManager
 
     public void DisconnectDevice(string deviceId)
     {
-        if( !_deviceSessions.TryGetValue(deviceId, out var session))
+        if(_deviceSessions.TryGetValue(deviceId, out var session))
         {
             session.Status = "DISCONNECTED";
             session.LastActivity = DateTime.UtcNow;
@@ -131,7 +131,7 @@ public class EngineSessionManager
 
     public bool RemoveDevice(string deviceId)
     {
-        if( ! _deviceSessions.TryGetValue(deviceId, out var session))
+        if(_deviceSessions.TryGetValue(deviceId, out var session))
         {
             _deviceSessions.TryRemove(deviceId, out _);
             _executionSessions.TryRemove(session.SessionId, out _);
