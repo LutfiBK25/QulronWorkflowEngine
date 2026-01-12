@@ -40,13 +40,29 @@ public class ExecutionEngine
         foreach (var pm in loadedCache.ProcessModules.Values)
             _moduleCache.AddProcessModule(pm);
 
+        foreach (var ca in loadedCache.CompareActions.Values)
+            _moduleCache.AddCompareAction(ca);
+
+        foreach (var cal in loadedCache.CalculateActions.Values)
+            _moduleCache.AddCalculateAction(cal);
+
         foreach (var dam in loadedCache.DatabaseActions.Values)
             _moduleCache.AddDatabaseAction(dam);
 
         foreach (var fm in loadedCache.FieldModules.Values)
             _moduleCache.AddFieldModule(fm);
+
+        foreach (var da in loadedCache.DialogActions.Values)
+            _moduleCache.AddDialogAction(da);
+
+        foreach (var sf in loadedCache.ScreenFormats.Values)
+            _moduleCache.AddScreenFormat(sf);
     }
 
+    /// <summary>
+    /// Execute a process module with parameters (creates new session)
+    /// Used for console testing
+    /// </summary>
     public async Task<ActionResult> ExecuteProcessModuleAsync(
         Guid processModuleId,
         string userId = null,
@@ -54,5 +70,28 @@ public class ExecutionEngine
     {
         var session = new ExecutionSession(userId);
         return await _processExecutor.ExecuteAsync(processModuleId, session, parameters);
+    }
+
+    /// <summary>
+    /// Execute a process module with an existing execution session
+    /// Used for device auto-start (session already created by EngineSessionManager)
+    /// </summary>
+    public async Task<ActionResult> ExecuteProcessModuleAsync(
+        Guid processModuleId,
+        ExecutionSession session,
+        Dictionary<string, object> parameters = null)
+    {
+        return await _processExecutor.ExecuteAsync(processModuleId, session, parameters);
+    }
+
+    /// <summary>
+    /// Resume a paused process from user input
+    /// Used when device sends user input to continue execution
+    /// </summary>
+    public async Task<ActionResult> ResumeProcessModuleAsync(
+        ExecutionSession session,
+        string inputValue)
+    {
+        return await _processExecutor.ResumeAfterDialogAsync(session, inputValue);
     }
 }

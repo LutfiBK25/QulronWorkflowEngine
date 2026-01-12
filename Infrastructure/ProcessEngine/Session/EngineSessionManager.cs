@@ -2,23 +2,25 @@
 using Domain.ProcessEngine.Entities;
 using Infrastructure.ProcessEngine.Execution;
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 
 namespace Infrastructure.ProcessEngine.Session;
 
 /// <summary>
 /// Manages all active device sessions in memory
+/// Handles device registration, session lifecycle, and process execution
 /// </summary>
 public class EngineSessionManager
 {
     private readonly ConcurrentDictionary<string, DeviceSession> _deviceSessions;
     private readonly ConcurrentDictionary<Guid, ExecutionSession> _executionSessions;
+    private readonly ConcurrentDictionary<string, ActionResult> _deviceExecutionResults; // Stores last execution result per device
     private readonly TimeSpan _sessionTimeout = TimeSpan.FromHours(8);
 
     public EngineSessionManager()
     {
         _deviceSessions = new ConcurrentDictionary<string, DeviceSession>();
         _executionSessions = new ConcurrentDictionary<Guid, ExecutionSession>();
+        _deviceExecutionResults = new ConcurrentDictionary<string, ActionResult>();
 
         // Start background cleanup task
         Task.Run(CleanupInactiveSessionsAsync);
@@ -48,6 +50,124 @@ public class EngineSessionManager
         return deviceSession;
     }
 
+    /// <summary>
+    /// Starts the root process module for the specified device asynchronously using the provided execution engine.
+    /// </summary>
+    /// <remarks>If the process is paused and awaiting user input, the device session is updated to reflect
+    /// the paused state. The method also updates the device session status and stores the execution result for later
+    /// retrieval.</remarks>
+    /// <param name="deviceId">The unique identifier of the device for which to start the process.</param>
+    /// <param name="engine">The execution engine used to run the device's process module.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an ActionResult indicating the
+    /// outcome of the process start operation. Returns a failure result if the device or execution session is not
+    /// found, or if an error occurs during execution.</returns>
+    public async Task<ActionResult> StartDeviceProcessAsync(string deviceId, ExecutionEngine engine)
+    {
+        var deviceSession = GetDeviceSession(deviceId);
+        if (deviceSession == null)
+        {
+            return ActionResult.Fail($"Device {deviceId} not found");
+        }
+
+        var executionSession = GetExecutionSessionByDevice(deviceId);
+        if (executionSession == null)
+        {
+            return ActionResult.Fail($"Execution session not found for device {deviceId}");
+        }
+
+        try
+        {
+            // Execute the root process module
+            var result = await engine.ExecuteProcessModuleAsync(deviceSession.RootProcessModuleId, executionSession);
+
+            // If paused (waiting for input), store screen JSON
+            if (executionSession.IsPaused)
+            {
+                deviceSession.CurrentScreenJson = executionSession.PausedScreenJson;
+                deviceSession.Status = "IDLE";  // Waiting for user input
+            }
+            else if (result.Result == Domain.ProcessEngine.Enums.ExecutionResult.Pass)
+            {
+                deviceSession.Status = "CONNECTED";
+                deviceSession.CurrentScreenJson = "Process completed successfully";
+            }
+            else
+            {
+                deviceSession.Status = "CONNECTED";
+                deviceSession.CurrentScreenJson = $"Process failed: {result.Message}";
+            }
+
+            // Store the result for later retrieval
+            _deviceExecutionResults[deviceId] = result;
+
+            return result;
+
+        }
+        catch (Exception ex)
+        {
+            return ActionResult.Fail($"Error starting device process: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Resume a paused device process with user input
+    /// </summary>
+    public async Task<ActionResult> ResumeDeviceProcessAsync(
+        string deviceId,
+        string userInput,
+        ExecutionEngine engine)
+    {
+        var executionSession = GetExecutionSessionByDevice(deviceId);
+        if (executionSession == null)
+        {
+            return ActionResult.Fail($"Execution session not found for device {deviceId}");
+        }
+
+        if (!executionSession.IsPaused)
+        {
+            return ActionResult.Fail($"Device {deviceId} is not paused");
+        }
+
+        try
+        {
+            // Resume the execution with user input
+            var result = await engine.ResumeProcessModuleAsync(executionSession, userInput);
+
+            var deviceSession = GetDeviceSession(deviceId);
+            if (deviceSession != null)
+            {
+                // Update device session status based on execution state
+                if (executionSession.IsPaused)
+                {
+                    deviceSession.Status = "IDLE";  // Still waiting for input
+                    deviceSession.CurrentScreenJson = executionSession.PausedScreenJson;
+                }
+                else if (result.Result == Domain.ProcessEngine.Enums.ExecutionResult.Pass)
+                {
+                    deviceSession.Status = "CONNECTED";
+                    deviceSession.CurrentScreenJson = "Process completed successfully";
+                }
+                else
+                {
+                    deviceSession.Status = "CONNECTED";
+                    deviceSession.CurrentScreenJson = $"Process failed: {result.Message}";
+                }
+
+                deviceSession.LastActivity = DateTime.UtcNow;
+            }
+
+            // Store the result
+            _deviceExecutionResults[deviceId] = result;
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            return ActionResult.Fail($"Error resuming device process: {ex.Message}", ex);
+        }
+    }
+
+
     public DeviceSession GetDeviceSession(string deviceId)
     {
         _deviceSessions.TryGetValue(deviceId, out var session);
@@ -66,6 +186,12 @@ public class EngineSessionManager
         if (deviceSession == null) return null;
 
         return GetExecutionSession(deviceSession.SessionId);
+    }
+
+    public ActionResult GetLastExecutionResult(string deviceId)
+    {
+        _deviceExecutionResults.TryGetValue(deviceId, out var result);
+        return result;
     }
 
     public void UpdateDeviceActivity(string deviceId)
@@ -135,6 +261,7 @@ public class EngineSessionManager
         {
             _deviceSessions.TryRemove(deviceId, out _);
             _executionSessions.TryRemove(session.SessionId, out _);
+            _deviceExecutionResults.TryRemove(deviceId, out _);  // remove execution result
             return true;
         }
         return false;
@@ -149,14 +276,14 @@ public class EngineSessionManager
     public IEnumerable<DeviceSession> GetActiveDevices()
     {
         return _deviceSessions.Values
-            .Where(s => s.Status == "ACTIVE" || s.Status == "CONNECTED")
+            .Where(s => s.Status == "ACTIVE" || s.Status == "CONNECTED" || s.Status == "IDLE")
             .ToList();
     }
 
     public int GetActiveDeviceCount()
     {
         return _deviceSessions.Values
-            .Count(s => s.Status == "ACTIVE" || s.Status == "CONNECTED");
+            .Count(s => s.Status == "ACTIVE" || s.Status == "CONNECTED" || s.Status == "IDLE");
     }
 
     public IEnumerable<DeviceSession> GetDevicesByUser(string userId)

@@ -13,8 +13,14 @@ public class RepositoryDBContext : DbContext
     public DbSet<Module> Modules { get; set; }
     public DbSet<ProcessModule> ProcessModules { get; set; }
     public DbSet<ProcessModuleDetail> ProcessModuleDetails { get; set; }
+    public DbSet<CompareActionModule> CompareActions { get; set; }
+    public DbSet<CalculateActionModule> CalculateActions { get; set; }
     public DbSet<DatabaseActionModule> DatabaseActionModules { get; set; }
     public DbSet<FieldModule> FieldModules { get; set; }
+    public DbSet<DialogActionModule> DialogActions { get; set; }
+    public DbSet<ScreenFormatModule> ScreenFormats { get; set; }
+    public DbSet<SoftKeyModule> SoftKeyModules { get; set; }
+    public DbSet<Device> Devices { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -273,6 +279,53 @@ public class RepositoryDBContext : DbContext
                 .WithOne()
                 .HasForeignKey<FieldModule>(e => e.ModuleId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // =============================================
+        // DEVICES
+        // =============================================
+        modelBuilder.Entity<Device>(entity =>
+        {
+            entity.ToTable("devices");
+            entity.HasKey(e => e.DeviceId);
+
+            entity.Property(e => e.DeviceId)
+                .HasColumnName("device_id")
+                .HasMaxLength(50);
+
+            entity.Property(e => e.DeviceName)
+                .HasColumnName("device_name")
+                .HasMaxLength(255)
+                .IsRequired();
+
+            entity.Property(e => e.DeviceType)
+                .HasColumnName("device_type")
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(e => e.RootProcessModuleId)
+                .HasColumnName("root_process_module_id")
+                .IsRequired();
+
+            entity.Property(e => e.RegisteredAt)
+                .HasColumnName("registered_at")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.Property(e => e.LastConnected)
+                .HasColumnName("last_connected");
+
+            entity.Property(e => e.IsActive)
+                .HasColumnName("is_active")
+                .HasDefaultValue(true);
+
+            entity.Property(e => e.Metadata)
+                .HasColumnName("metadata");
+
+            entity.HasIndex(e => e.DeviceType)
+                .HasDatabaseName("idx_devices_type");
+
+            entity.HasIndex(e => e.IsActive)
+                .HasDatabaseName("idx_devices_active");
         });
     }
 }

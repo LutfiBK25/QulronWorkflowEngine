@@ -6,4 +6,5 @@
   <Project Path="Domain/Domain.csproj" />
   <Project Path="Infrastructure/Infrastructure.csproj" />
   <Project Path="QulronEngineConsoleApp/QulronEngineConsoleApp.csproj" />
+  <Project Path="QulronEngineService/QulronEngineService.csproj" Id="403b6312-a6a8-412f-a3c3-ba7023e6ba83" />
 </Solution>

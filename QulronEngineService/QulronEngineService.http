@@ -1,0 +1,6 @@
+@QulronEngineService_HostAddress = http://localhost:5032
+
+GET {{QulronEngineService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
