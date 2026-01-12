@@ -4,7 +4,6 @@ using Infrastructure.ProcessEngine;
 using Infrastructure.ProcessEngine.Services;
 using Infrastructure.ProcessEngine.Session;
 using Microsoft.EntityFrameworkCore;
-using System.Threading.Tasks;
 
 namespace QulronEngineService;
 
@@ -95,7 +94,7 @@ public class Program
                 var sessionManager = scope.ServiceProvider.GetRequiredService<EngineSessionManager>();
 
                 // Test Repository Database Connection
-                Console.WriteLine("Testing database connection...");
+                Console.WriteLine("Testing Repository database connection...");
                 if(!await dbContext.Database.CanConnectAsync())
                 {
                     throw new InvalidOperationException("Cannot connect to Repository database");
